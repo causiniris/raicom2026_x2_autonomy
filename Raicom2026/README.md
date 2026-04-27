@@ -46,6 +46,27 @@ docker build -t lingxi-x2-env:v1.0 .
 ```bash
 docker images | grep ingxi-x2-env
 ```
+如果下载仍超时，可尝试下放操作：
+
+```
+#终端输入：
+sudo nano /etc/docker/daemon.json
+
+#将下述指令写入上述文件（换源地址根据实际情况修改）
+{
+  "registry-mirrors": [
+    "https://docker.1ms.run",
+    "https://docker.xuanyuan.me",
+    "https://docker.m.daocloud.io"
+  ]
+}
+
+#重启docker服务
+sudo systemctl daemon-reload
+sudo systemctl restart docker
+```
+
+
 
 ## 镜像启动
 首先在宿主机上运行以下命令，使得容器内可以运行 GUI 程序显示仿真窗口
