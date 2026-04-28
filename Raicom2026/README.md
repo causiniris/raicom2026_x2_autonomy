@@ -17,12 +17,13 @@
 3. 系统性能不太低，可流畅运行 mujoco 仿真，无需 GPU 加速
 
 
-## 获取mc 和 sim_mujoco 的预编译包
-从 github 上下载需要的预编译包（[ 下载 ](https://github.com/Link-U-OS/link_u_os_competition/releases/tag/v1.0.0)），下载所需要的[ mc ](https://github.com/Link-U-OS/link_u_os_competition/releases/download/v1.0.0/mc_x86_v1.0.0_raicom26.zip)和[ sim_mujoco ](https://github.com/Link-U-OS/link_u_os_competition/releases/download/v1.0.0/sim_mujoco-x86-v1.0.0-raicom26.zip)包。
+## 获取 mc 、sim_mujoco 以及aimdk_msgs 的预编译包
+可在赛事交流群获取。
 
 将下载的预编译包解压到Raicom2026路径的根目录下，目录结构如下：
 ```bash
 Raicom2026
+├── aimdk_msgs <----------- aimdk_msgs 预编译包
 ├── Dockerfile
 ├── document
 │   └── images
