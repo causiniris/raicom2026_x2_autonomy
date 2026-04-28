@@ -9,8 +9,8 @@ ARG USE_MIRROR=1
 ARG MIRROR_URL="mirrors.aliyun.com"
 ARG INSTALL_GPP13=1
 ARG USERNAME=agi
-ARG UID=1001
-ARG GID=1001
+ARG USER_UID=1001
+ARG USER_GID=1001
 ARG ROS_MIRROR="tuna"
 
 ENV DEBIAN_FRONTEND=${DEBIAN_FRONTEND}
@@ -42,9 +42,10 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o 
       libacl1-dev python3-pip cmake && \
     rm -rf /var/lib/apt/lists/*
 
+RUN pip install anthropic
 
-RUN groupadd -g ${GID} ${USERNAME} || true && \
-    useradd -m -u ${UID} -g ${GID} -s /bin/bash ${USERNAME} && \
+RUN groupadd -g ${USER_GID} ${USERNAME} || true && \
+    useradd -m -u ${USER_UID} -g ${USER_GID} -s /bin/bash ${USERNAME} && \
     usermod -aG sudo ${USERNAME} && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
 RUN mkdir -p /agibot/data/var/ && \
@@ -60,6 +61,6 @@ RUN echo "source /opt/ros/humble/setup.bash" >> /home/${USERNAME}/.bashrc
 
 RUN echo "export ROS_DOMAIN_ID=20" >> /home/${USERNAME}/.bashrc
 
-RUN echo "source /home/${USERNAME}/x2_deploy_workspace/mc/build/install/share/aimdk_msgs/local_setup.bash" >> /home//${USERNAME}/.bashrc
+RUN echo "source /home/${USERNAME}/x2_deploy_workspace/aimdk_msgs/share/aimdk_msgs/local_setup.bash" >> /home//${USERNAME}/.bashrc
 
 CMD ["/bin/bash"]

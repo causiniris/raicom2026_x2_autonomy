@@ -4,3 +4,9 @@
 .idea
 .vscode
 bazel-*
+
+Raicom2026/mc/
+Raicom2026/sim_mujoco/
+Raicom2026/aimdk_msgs/
+
+*.zip

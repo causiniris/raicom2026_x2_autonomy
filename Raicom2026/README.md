@@ -41,10 +41,29 @@ docker build -t lingxi-x2-env:v1.0 .
 
 若 docker build 过程拉取基础镜像超时，需自行配置镜像源。
 
+### UID/GID 权限说明
+
+Dockerfile 默认会在镜像中创建 `agi` 用户，默认 UID/GID 均为 `1001`。如果宿主机当前用户不是 `1001:1001`，挂载当前目录到容器后，可能出现容器内无法写入工作目录、生成文件归属异常等权限问题。
+
+推荐在构建镜像时将容器用户 UID/GID 设置为宿主机当前用户：
+
+```bash
+docker build \
+  --build-arg USER_UID=$(id -u) \
+  --build-arg USER_GID=$(id -g) \
+  -t lingxi-x2-env:v1.0 .
+```
+
+如需保留默认值，也可以继续使用：
+
+```bash
+docker build -t lingxi-x2-env:v1.0 .
+```
+
 成功后可执行以下命令检查镜像是否已经存在
 
 ```bash
-docker images | grep ingxi-x2-env
+docker images | grep lingxi-x2-env
 ```
 如果下载仍超时，可尝试下放操作：
 
