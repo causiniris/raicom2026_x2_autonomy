@@ -168,8 +168,10 @@ cd /home/agi/x2_deploy_workspace/mc/bin
 docker start x2_deploy && docker exec -it x2_deploy /bin/bash     
 
 # 启动仿真
-cd /home/agi/x2_deploy_workspace/example
-python3 get_mode.py    
+cd /home/agi/x2_deploy_workspace/example/py
+python3 set_mode.py    #选择SD 模式后，点击仿真的Reset 按钮 
+
 ```  
+选择SD 模式后，点击仿真的Reset 按钮， 可以在仿真中看到机器人稳定站立。
 
 其他示例代码可参考 [AimDK_X2 官方开发手册](https://x2-aimdk.agibot.com/zh-cn/latest/index.html)
