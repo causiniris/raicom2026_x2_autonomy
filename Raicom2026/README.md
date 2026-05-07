@@ -17,13 +17,17 @@
 3. 系统性能不太低，可流畅运行 mujoco 仿真，无需 GPU 加速
 
 
-## 获取 mc 、sim_mujoco 以及aimdk_msgs 的预编译包
-可在赛事交流群获取。
+## 获取 mc 、sim_mujoco 以及aimdk_msgs 包
+可在赛事交流群获取。您将获得三个包：
+* mc_x86_v1.0.0_raicom26.zip：机器人控制模块，用于控制机器人运动
+* sim_mujoco-x86-v1.0.0-raicom26.zip：仿真环境，用于模拟机器人在真实世界中的运动
+* aimdk-aarch64-1bde262f-artifacts.zip：消息定义，用于通信
 
-将下载的预编译包解压到Raicom2026路径的根目录下，目录结构如下：
+
+将下载的三个包解压到Raicom2026路径的根目录下，目录结构如下：
 ```bash
 Raicom2026
-├── aimdk_msgs <----------- aimdk_msgs 预编译包
+├── aimdk-aarch64-1bde262f-artifacts <----------- aimdk_msgs 包
 ├── Dockerfile
 ├── document
 │   └── images
@@ -133,6 +137,21 @@ docker run -it \
   -d lingxi-x2-env:v1.0
 ```
 
+## 编译 aimdk_msgs 包
+开启一新的终端执行如下指令：
+```bash
+# 进入容器环境
+docker start x2_deploy && docker exec -it x2_deploy /bin/bash     
+
+# 开始编译构建
+cd  /home/agi/x2_deploy_workspace/aimdk-aarch64-1bde262f-artifacts
+
+colcon build 
+
+#将构建产物复制到指令目录下
+cp -r ./install/aimdk_msgs/ ../
+``` 
+
 ## 启动仿真
 开启一新的终端执行如下指令：
 ```bash
@@ -153,7 +172,7 @@ cd /home/agi/x2_deploy_workspace/sim_mujoco/bin
 # 进入容器环境
 docker start x2_deploy && docker exec -it x2_deploy /bin/bash     
 
-# 启动仿真
+# 启动mc
 cd /home/agi/x2_deploy_workspace/mc/bin
 ./em_run.sh   
 ```  
@@ -167,7 +186,7 @@ cd /home/agi/x2_deploy_workspace/mc/bin
 # 进入容器环境
 docker start x2_deploy && docker exec -it x2_deploy /bin/bash     
 
-# 启动仿真
+# 启动example
 cd /home/agi/x2_deploy_workspace/example/py
 python3 set_mode.py    #选择SD 模式后，点击仿真的Reset 按钮 
 

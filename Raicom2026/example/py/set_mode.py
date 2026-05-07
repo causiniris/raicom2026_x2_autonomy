@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-"""Set robot mode via ROS2 service."""
-
 import argparse
 import sys
 

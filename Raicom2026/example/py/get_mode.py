@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-"""Get current robot mode via ROS2 service."""
-
 import sys
 
 import rclpy

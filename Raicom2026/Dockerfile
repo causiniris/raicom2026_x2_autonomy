@@ -39,7 +39,7 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o 
       ros-humble-desktop python3-argcomplete python3-colcon-common-extensions \
       ros-humble-grid-map-msgs ros-humble-grid-map-ros ros-humble-rmw-cyclonedds-cpp \
       libgflags-dev libscrypt-dev liboctomap-dev liborocos-kdl-dev \
-      libacl1-dev python3-pip cmake && \
+      libacl1-dev python3-pip cmake unzip  && \
     rm -rf /var/lib/apt/lists/*
 
 RUN pip install anthropic
