@@ -3,10 +3,12 @@
 #include <cmath>
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
+#include <unistd.h>
 
 namespace {
-constexpr double kZone1X = 1.0;
-constexpr double kZone1Y = 0.0;
+constexpr double kDefaultZone1X = 0.0;
+constexpr double kDefaultZone1Y = 1.75;
 constexpr double kStopDistance = 0.20;
 constexpr double kMaxForwardVelocity = 0.18;
 constexpr double kMaxLateralVelocity = 0.08;
@@ -17,16 +19,29 @@ constexpr double kYawKp = 1.20;
 constexpr int32_t kMcInputActionAdd = 1001;
 constexpr int32_t kInputSourcePriority = 40;
 constexpr int32_t kInputSourceTimeoutMs = 1000;
-constexpr const char* kInputSourceName = "node";
 
 double clamp(double value, double low, double high) {
   return std::max(low, std::min(value, high));
+}
+
+double readTargetCoordinate(const char* env_name, double default_value) {
+  const char* value = std::getenv(env_name);
+  if (value == nullptr) {
+    return default_value;
+  }
+
+  char* end = nullptr;
+  const double parsed = std::strtod(value, &end);
+  return (end != value) ? parsed : default_value;
 }
 }  // namespace
 
 PresetMotionWrapper::PresetMotionWrapper(const rclcpp::Node::SharedPtr& node)
     : node_(node),
+      input_source_name_("node_" + std::to_string(static_cast<long>(::getpid()))),
       pose_filter_(0.2, 5),
+      target_x_(readTargetCoordinate("X2_ZONE1_X", kDefaultZone1X)),
+      target_y_(readTargetCoordinate("X2_ZONE1_Y", kDefaultZone1Y)),
       current_x_(0.0),
       current_y_(0.0),
       current_yaw_(0.0),
@@ -77,7 +92,7 @@ bool PresetMotionWrapper::registerInputSource() {
 
   auto request = std::make_shared<SetMcInputSource::Request>();
   request->action.value = kMcInputActionAdd;
-  request->input_source.name = kInputSourceName;
+  request->input_source.name = input_source_name_;
   request->input_source.priority = kInputSourcePriority;
   request->input_source.timeout = kInputSourceTimeoutMs;
 
@@ -96,7 +111,7 @@ bool PresetMotionWrapper::registerInputSource() {
       RCLCPP_INFO(
           node_->get_logger(),
           "[NAV_GOAL] input source registered name=%s priority=%d timeout_ms=%d task_id=%lu",
-          kInputSourceName,
+          input_source_name_.c_str(),
           kInputSourcePriority,
           kInputSourceTimeoutMs,
           response->response.task_id);
@@ -122,9 +137,10 @@ void PresetMotionWrapper::publishZone1Goal() {
   navigation_active_ = true;
   RCLCPP_INFO(
       node_->get_logger(),
-      "[NAV_GOAL] enabling locomotion control toward zone_1=(%.2f, %.2f)",
-      kZone1X,
-      kZone1Y);
+      "[NAV_GOAL] enabling locomotion control toward zone_1=(%.2f, %.2f) source=%s",
+      target_x_,
+      target_y_,
+      input_source_name_.c_str());
 
   if (navigation_timer_) {
     navigation_timer_->cancel();
@@ -173,7 +189,7 @@ void PresetMotionWrapper::publishNavigationVelocity() {
   velocity.header.meas_stamp = velocity.header.stamp;
   velocity.header.frame_id = "base_link";
   velocity.header.sequence = 0;
-  velocity.source = kInputSourceName;
+  velocity.source = input_source_name_;
 
   if (!navigation_active_ || !has_odom_ || !has_yaw_) {
     velocity.forward_velocity = 0.0;
@@ -191,8 +207,8 @@ void PresetMotionWrapper::publishNavigationVelocity() {
     return;
   }
 
-  const double dx = kZone1X - current_x_;
-  const double dy = kZone1Y - current_y_;
+  const double dx = target_x_ - current_x_;
+  const double dy = target_y_ - current_y_;
   const double distance = std::hypot(dx, dy);
 
   if (distance <= kStopDistance) {

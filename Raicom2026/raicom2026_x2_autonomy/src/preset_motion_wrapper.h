@@ -8,6 +8,8 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 
+#include <string>
+
 class PresetMotionWrapper {
  public:
   explicit PresetMotionWrapper(const rclcpp::Node::SharedPtr& node);
@@ -32,7 +34,10 @@ class PresetMotionWrapper {
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr leg_odom_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr torso_imu_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr chest_imu_sub_;
+  std::string input_source_name_;
   CentroidFilter pose_filter_;
+  double target_x_;
+  double target_y_;
   double current_x_;
   double current_y_;
   double current_yaw_;
