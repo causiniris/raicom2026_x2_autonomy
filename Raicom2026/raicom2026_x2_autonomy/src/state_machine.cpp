@@ -10,6 +10,8 @@ const char* stateName(AutonomyState state) {
       return "WALK_TO_ZONE_1";
     case AutonomyState::DANCE:
       return "DANCE";
+    case AutonomyState::FALL_GUARD:
+      return "FALL_GUARD";
     case AutonomyState::DONE:
       return "DONE";
   }
@@ -25,6 +27,8 @@ AutonomyState nextState(AutonomyState state) {
       return AutonomyState::DANCE;
     case AutonomyState::DANCE:
       return AutonomyState::DONE;
+    case AutonomyState::FALL_GUARD:
+      return AutonomyState::STAND_UP;
     case AutonomyState::DONE:
       return AutonomyState::DONE;
   }

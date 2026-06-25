@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <numeric>
@@ -10,6 +11,13 @@
 namespace {
 constexpr double kBaseMotionThresholdMeters = 0.03;
 constexpr double kJointVarianceThreshold = 0.0005;
+
+std::filesystem::path workspaceDocsDir() {
+  if (const char* workspace = std::getenv("X2_DEPLOY_WORKSPACE")) {
+    return std::filesystem::path(workspace) / "DOCS";
+  }
+  return std::filesystem::current_path().parent_path() / "DOCS";
+}
 
 bool hasType(const std::vector<std::string>& types, const std::string& target) {
   return std::find(types.begin(), types.end(), target) != types.end();
@@ -306,8 +314,9 @@ void RobotStateMonitor::printDebugDump() {
 }
 
 void RobotStateMonitor::writeReport() {
-  std::filesystem::create_directories("../Raicom2026/DOCS");
-  std::ofstream report("../Raicom2026/DOCS/MOTION_DEBUG_REPORT.md", std::ios::trunc);
+  const auto docs_dir = workspaceDocsDir();
+  std::filesystem::create_directories(docs_dir);
+  std::ofstream report(docs_dir / "MOTION_DEBUG_REPORT.md", std::ios::trunc);
   const auto command = controller_->lastCommand();
   const auto inspection = inspector_->snapshot(robot_moving_);
 

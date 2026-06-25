@@ -18,9 +18,9 @@ find_package(sensor_msgs REQUIRED)
 
 set(RAICOM_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
 set(AIMDK_MSGS_INCLUDE_DIR
-  "${RAICOM_ROOT}/Raicom2026/aimdk-aarch64-1bde262f-artifacts/src/aimdk_msgs/prebuilt_aarch64/include/aimdk_msgs"
+  "${RAICOM_ROOT}/aimdk-aarch64-1bde262f-artifacts/src/aimdk_msgs/prebuilt_aarch64/include/aimdk_msgs"
 )
-set(AIMDK_MSGS_LIBRARY_DIR "${RAICOM_ROOT}/Raicom2026/mc/lib")
+set(AIMDK_MSGS_LIBRARY_DIR "${RAICOM_ROOT}/mc/lib")
 
 add_executable(raicom2026_x2_autonomy
   src/main.cpp

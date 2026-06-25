@@ -18,7 +18,7 @@ void preloadAimdkTypesupport(const char* argv0) {
   }
 
   const fs::path autonomy_dir = exe_path.parent_path().parent_path();
-  const fs::path lib_dir = autonomy_dir.parent_path() / "Raicom2026" / "mc" / "lib";
+  const fs::path lib_dir = autonomy_dir.parent_path() / "mc" / "lib";
   const std::vector<std::string> libraries = {
       "libaimdk_msgs__rosidl_typesupport_cpp.so",
       "libaimdk_msgs__rosidl_typesupport_fastrtps_cpp.so",
@@ -52,7 +52,7 @@ int main(int argc, char** argv) {
   executor.add_node(inspector);
   executor.add_node(monitor);
 
-  while (rclcpp::ok() && !controller->finished()) {
+  while (rclcpp::ok()) {
     executor.spin_some();
     rclcpp::sleep_for(std::chrono::milliseconds(5));
   }

@@ -10,16 +10,24 @@ Raicom2026 比赛用户自主控制代码。
 
 ## 构建
 
+Autonomy 必须在 `x2_deploy` Docker workspace 内构建：
+
 ```bash
+docker start x2_deploy
+docker exec -it x2_deploy /bin/bash
+cd /home/agi/x2_deploy_workspace/raicom2026_x2_autonomy
 source /opt/ros/humble/setup.bash
-cmake -S . -B build
-cmake --build build
+cmake -S . -B build_docker
+cmake --build build_docker
 ```
 
 ## 运行
 
+禁止在 host 运行 autonomy。统一启动入口：
+
 ```bash
-./build/raicom2026_x2_autonomy
+docker start x2_deploy
+docker exec -it x2_deploy /home/agi/x2_deploy_workspace/scripts/run_all.sh
 ```
 
 ## 控制方式说明
@@ -100,14 +108,11 @@ cd ../Raicom2026/mc/bin
 ./em_run.sh
 ```
 
-3. 另开终端启动 autonomy：
+3. 在容器内通过统一入口启动 sim、MC 和 autonomy：
 
 ```bash
-cd ../raicom2026_x2_autonomy
-source /opt/ros/humble/setup.bash
-cmake -S . -B build
-cmake --build build
-./build/raicom2026_x2_autonomy
+docker start x2_deploy
+docker exec -it x2_deploy /home/agi/x2_deploy_workspace/scripts/run_all.sh
 ```
 
 4. 检查：

@@ -10,7 +10,7 @@ void runController(AutonomyState state) {
 
   switch (state) {
     case AutonomyState::STAND_UP:
-      std::cout << "Controller: stabilization gate active for STAND_UP" << std::endl;
+      std::cout << "Controller: official MC get-up/balance action active for STAND_UP" << std::endl;
       break;
     case AutonomyState::WALK_TO_ZONE_1:
       std::cout << "Controller: WALK command requires stability gate, stable="
@@ -19,6 +19,9 @@ void runController(AutonomyState state) {
     case AutonomyState::DANCE:
       std::cout << "Controller: DANCE command requires stability gate, stable="
                 << (stable ? "true" : "false") << std::endl;
+      break;
+    case AutonomyState::FALL_GUARD:
+      std::cout << "Controller: fall guard active, commands saturated to recovery limits" << std::endl;
       break;
     case AutonomyState::DONE:
       break;
