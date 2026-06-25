@@ -26,9 +26,13 @@ double clamp(double value, double low, double high) {
 
 PresetMotionWrapper::PresetMotionWrapper(const rclcpp::Node::SharedPtr& node)
     : node_(node),
+      pose_filter_(0.2, 5),
       current_x_(0.0),
       current_y_(0.0),
       current_yaw_(0.0),
+      raw_x_(0.0),
+      raw_y_(0.0),
+      raw_yaw_(0.0),
       has_odom_(false),
       has_yaw_(false),
       input_source_registered_(false),
@@ -132,17 +136,24 @@ void PresetMotionWrapper::publishZone1Goal() {
 }
 
 void PresetMotionWrapper::handleOdom(const nav_msgs::msg::Odometry::SharedPtr msg) {
-  current_x_ = msg->pose.pose.position.x;
-  current_y_ = msg->pose.pose.position.y;
   const double x = msg->pose.pose.orientation.x;
   const double y = msg->pose.pose.orientation.y;
   const double z = msg->pose.pose.orientation.z;
   const double w = msg->pose.pose.orientation.w;
   const double siny_cosp = 2.0 * (w * z + x * y);
   const double cosy_cosp = 1.0 - 2.0 * (y * y + z * z);
-  current_yaw_ = std::atan2(siny_cosp, cosy_cosp);
-  has_odom_ = true;
-  has_yaw_ = true;
+  raw_x_ = msg->pose.pose.position.x;
+  raw_y_ = msg->pose.pose.position.y;
+  raw_yaw_ = std::atan2(siny_cosp, cosy_cosp);
+
+  const CentroidFilterOutput filtered = pose_filter_.update(*msg);
+  if (filtered.sliding_mean.valid) {
+    current_x_ = filtered.sliding_mean.x;
+    current_y_ = filtered.sliding_mean.y;
+    current_yaw_ = filtered.sliding_mean.yaw;
+    has_odom_ = true;
+    has_yaw_ = true;
+  }
 }
 
 void PresetMotionWrapper::handleImu(const sensor_msgs::msg::Imu::SharedPtr msg) {
@@ -221,9 +232,13 @@ void PresetMotionWrapper::publishNavigationVelocity() {
       node_->get_logger(),
       *node_->get_clock(),
       1000,
-      "[NAV_GOAL] pos=(%.3f,%.3f) dist=%.3f forward=%.3f lateral=%.3f yaw_error=%.3f",
+      "[NAV_GOAL] raw=(%.3f,%.3f,%.3f) filtered=(%.3f,%.3f,%.3f) dist=%.3f forward=%.3f lateral=%.3f yaw_error=%.3f",
+      raw_x_,
+      raw_y_,
+      raw_yaw_,
       current_x_,
       current_y_,
+      current_yaw_,
       distance,
       velocity.forward_velocity,
       velocity.lateral_velocity,

@@ -59,26 +59,54 @@ int main(int argc, char** argv) {
   bool ok = stability_wait->waitForResetDrop(120.0);
 
   if (ok) {
-    RCLCPP_INFO(orchestrator->get_logger(), "[FLOW] STEP 2 SetMcAction SD after reset");
+    RCLCPP_INFO(orchestrator->get_logger(), "[FLOW] STEP 1 set stand action after reset");
     ok = run_action("STAND_DEFAULT", 8.0);
   }
 
   if (ok) {
-    RCLCPP_INFO(orchestrator->get_logger(), "[FLOW] STEP 3 wait stable after SD");
+    RCLCPP_INFO(orchestrator->get_logger(), "[FLOW] STEP 1 wait stable after STAND_DEFAULT");
     ok = stability_wait->waitUntilStable(3.0, 15.0);
   }
 
   if (ok) {
-    RCLCPP_INFO(orchestrator->get_logger(), "[FLOW] STEP 4 SetMcAction LOCOMOTION_DEFAULT");
-    ok = run_action("LOCOMOTION_DEFAULT", 8.0);
+    RCLCPP_INFO(
+        orchestrator->get_logger(),
+        "[STEP1_RESULT] stable_stand=true mc_ready=true detail=STAND_DEFAULT accepted and stability check passed");
+  } else {
+    RCLCPP_ERROR(
+      orchestrator->get_logger(),
+      "[STEP1_RESULT] stable_stand=false mc_ready=false detail=reset, stand action, or stability check failed");
   }
 
+  bool locomotion_ready = false;
   if (ok) {
-    RCLCPP_INFO(orchestrator->get_logger(), "[FLOW] STEP 5 start continuous navigation loop");
-    preset.publishZone1Goal();
+    RCLCPP_INFO(orchestrator->get_logger(), "[FLOW] STEP 2 set locomotion mode only");
+    locomotion_ready = run_action("LOCOMOTION_DEFAULT", 8.0);
+    if (locomotion_ready) {
+      RCLCPP_INFO(
+          orchestrator->get_logger(),
+          "[STEP2_RESULT] locomotion_mode=true velocity_commanding=false detail=LOCOMOTION_DEFAULT accepted");
+      RCLCPP_INFO(
+          orchestrator->get_logger(),
+          "[FLOW] STEP 3 start filtered zone1 navigation");
+      preset.publishZone1Goal();
+      RCLCPP_INFO(
+          orchestrator->get_logger(),
+          "[STEP3_RESULT] filtered_navigation=true zone1_targeting=true detail=PresetMotionWrapper uses filtered pose");
+    } else {
+      RCLCPP_ERROR(
+          orchestrator->get_logger(),
+          "[STEP2_RESULT] locomotion_mode=false velocity_commanding=false detail=LOCOMOTION_DEFAULT failed");
+    }
   } else {
-    RCLCPP_ERROR(orchestrator->get_logger(), "[FLOW] aborted before continuous navigation");
+    RCLCPP_INFO(
+        orchestrator->get_logger(),
+        "[STEP2_RESULT] locomotion_mode=false velocity_commanding=false detail=skipped because STEP 1 failed");
   }
+
+  RCLCPP_INFO(
+      orchestrator->get_logger(),
+      "[FLOW] navigation active only after STEP 1 and STEP 2 succeed");
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(orchestrator);

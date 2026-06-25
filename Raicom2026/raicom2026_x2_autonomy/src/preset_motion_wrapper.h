@@ -1,5 +1,7 @@
 #pragma once
 
+#include "localization/centroid_filter.h"
+
 #include <aimdk_msgs/msg/mc_locomotion_velocity.hpp>
 #include <aimdk_msgs/srv/set_mc_input_source.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -30,9 +32,13 @@ class PresetMotionWrapper {
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr leg_odom_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr torso_imu_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr chest_imu_sub_;
+  CentroidFilter pose_filter_;
   double current_x_;
   double current_y_;
   double current_yaw_;
+  double raw_x_;
+  double raw_y_;
+  double raw_yaw_;
   bool has_odom_;
   bool has_yaw_;
   bool input_source_registered_;

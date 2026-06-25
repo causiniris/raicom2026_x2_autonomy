@@ -8,7 +8,10 @@ constexpr double kFeedbackTimeoutSeconds = 0.5;
 constexpr double kResetDropHeightMax = 0.10;
 constexpr double kResetDropHeightRateMax = 0.08;
 constexpr double kResetDropTiltMax = 0.35;
-constexpr double kMaxStableRollPitch = 0.18;
+constexpr double kStandingResetHeightMin = 0.45;
+constexpr double kStandingResetHeightMax = 0.95;
+constexpr double kStandingResetTiltMax = 0.20;
+constexpr double kMaxStableRollPitch = 0.30;
 constexpr double kMaxStableHeightRate = 0.04;
 constexpr double kMaxStableTiltRate = 0.12;
 }
@@ -93,15 +96,25 @@ bool StabilityWaitNode::stableNow() const {
 }
 
 bool StabilityWaitNode::resetDropNow() const {
+  const bool crouch_reset =
+      height_ <= kResetDropHeightMax &&
+      std::abs(height_rate_) <= kResetDropHeightRateMax &&
+      std::abs(roll_) <= kResetDropTiltMax &&
+      std::abs(pitch_) <= kResetDropTiltMax;
+
+  const bool standing_reset =
+      height_ >= kStandingResetHeightMin &&
+      height_ <= kStandingResetHeightMax &&
+      std::abs(height_rate_) <= kResetDropHeightRateMax &&
+      std::abs(roll_) <= kStandingResetTiltMax &&
+      std::abs(pitch_) <= kStandingResetTiltMax;
+
   return last_feedback_time_.nanoseconds() != 0 &&
          (now() - last_feedback_time_).seconds() <= kFeedbackTimeoutSeconds &&
          has_height_ &&
          has_orientation_ &&
          has_derivative_ &&
-         height_ <= kResetDropHeightMax &&
-         std::abs(height_rate_) <= kResetDropHeightRateMax &&
-         std::abs(roll_) <= kResetDropTiltMax &&
-         std::abs(pitch_) <= kResetDropTiltMax;
+         (crouch_reset || standing_reset);
 }
 
 bool StabilityWaitNode::waitForResetDrop(double timeout_seconds) {
