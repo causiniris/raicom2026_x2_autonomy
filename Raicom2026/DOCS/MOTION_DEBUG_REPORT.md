@@ -4,27 +4,26 @@
 
 - 是否收到 odom/state：是
 - 是否 publish 成功：是，控制节点已创建 publisher `/aima/mc/locomotion/velocity`
-- MC connectivity status：MC topics detected
-- arbitration status guess：arbitration override or source not registered
-- control rejection reason：publish OK but no robot motion detected
+- MC connectivity status：MC topics and sim feedback topics are present
+- arbitration status guess：source accepted or motion path active
+- control rejection reason：none
 - 是否 MC 接收：存在 MC 相关 topic，可能已接入
-- 机器人是否运动：否/未确认
-- 观测结果：已收到反馈但未超过运动阈值
+- 机器人是否运动：是
+- 观测结果：机器人已检测到运动
 
 ## 最终判定
 
-### CASE 2: COMMAND IGNORED
+### CASE 1: FULL CONTROL OK
 
-- ✔ publish OK
-- ❌ no motion
-- ✔ MC state/topic exists
-- conclusion: arbitration override or source not registered
+- ✔ MC receiving commands
+- ✔ feedback exists
+- ✔ robot moving
 
 ## 当前控制命令
 
 - state: `STAND_UP`
 - topic: `/aima/mc/locomotion/velocity`
-- source: `raicom_autonomy`
+- source: `pnc`
 - forward_velocity: `0`
 - lateral_velocity: `0`
 - yaw_rate/angular_velocity: `0`
@@ -35,16 +34,16 @@
 - publish_topic_exists: `true`
 - mc_feedback_exists: `true`
 - sim_feedback_exists: `true`
-- override_suspected: `true`
+- override_suspected: `false`
 - source_missing: `false`
 
 ## 反馈状态
 
 - odom_received: `true`
 - joint_received: `false`
-- base_position: `(-1.5, -1.5, 0.9)`
-- base_velocity: `(0, 0, 0)`
-- delta_position: `0.003988`
+- base_position: `(-1.51782, -1.84283, 0.0711547)`
+- base_velocity: `(0.00528392, -0.000200707, 0.000545751)`
+- delta_position: `0.890411`
 - joint_angle_variance: `0`
 - debug_mode: `false`
 
@@ -60,7 +59,7 @@
 - `/aima/hal/joint/leg/state` type=`aimdk_msgs/msg/JointStateArray` received=`false`
 - `/aima/hal/joint/waist/command` type=`aimdk_msgs/msg/JointCommandArray` received=`false`
 - `/aima/hal/joint/waist/state` type=`aimdk_msgs/msg/JointStateArray` received=`false`
-- `/aima/hal/odom/state` type=`nav_msgs/msg/Odometry` received=`true` age_sec=`247.356`
+- `/aima/hal/odom/state` type=`nav_msgs/msg/Odometry` received=`true` age_sec=`1535.62`
 - `/aima/mc/common/state` type=`aimdk_msgs/msg/McCommonState` received=`false`
 - `/aima/mc/leg_odometry` type=`nav_msgs/msg/Odometry` received=`false`
 
@@ -97,4 +96,4 @@
 
 ## 可能原因分析
 
-- 已收到反馈但未运动；问题可能在 MC 输入源仲裁、source 未注册、机器人模式不允许走跑，或仿真未响应 MC 输出。
+- 控制闭环有效；已检测到 base 或 joint motion。

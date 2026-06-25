@@ -11,9 +11,14 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr double kControlPeriodSeconds = 0.02;
 constexpr double kFeedbackTimeoutSeconds = 0.5;
 constexpr double kStandReadySeconds = 5.0;
+constexpr double kControlGatePoseConvergedSeconds = 3.0;
 constexpr double kWalkTargetForwardMeters = 0.45;
+constexpr double kZone1WorldDeltaX = 0.45;
+constexpr double kZone1WorldDeltaY = 0.0;
 constexpr double kWalkTargetToleranceMeters = 0.04;
 constexpr double kWalkLateralToleranceMeters = 0.06;
+constexpr double kWalkYawStartThreshold = 0.18;
+constexpr double kWalkYawSlowThreshold = 0.35;
 constexpr double kWalkTimeoutSeconds = 20.0;
 constexpr double kMaxForwardVelocity = 0.16;
 constexpr double kMaxLateralVelocity = 0.04;
@@ -36,9 +41,23 @@ constexpr double kGetUpCompletionTiltThreshold = 0.70;
 constexpr double kPreStabilizeMaxTiltRate = 1.2;
 constexpr double kGetUpCompletionMaxHeightRate = 0.08;
 constexpr double kGetUpCompletionMaxTiltRate = 0.80;
+constexpr double kPreActionMaxHeightRate = 0.03;
 constexpr double kStandMaxHeightRate = 0.025;
 constexpr double kStandMaxTiltRate = 0.16;
 constexpr double kStandMaxImuTiltRate = 0.35;
+constexpr double kLowPoseAbortHeight = 0.12;
+constexpr double kGetUpStallSeconds = 6.0;
+constexpr double kGetUpStallHeight = 0.10;
+constexpr double kGetUpStallPitch = 0.35;
+constexpr bool kEnableAutomaticSitUp = false;
+constexpr bool kEnablePostureInit = false;
+constexpr bool kEnableStandProbe = true;
+constexpr double kStandProbeDelaySeconds = 1.0;
+constexpr double kStandProbeTimeoutSeconds = 2.0;
+constexpr double kStandProbeMaxPitch = 0.18;
+constexpr double kStandProbeMaxRoll = 0.22;
+constexpr double kStandProbeMaxBackwardDrift = 0.025;
+constexpr double kStandProbeMaxHeightDrop = 0.025;
 
 bool isControlTopic(const std::string& topic) {
   return topic.find("locomotion") != std::string::npos ||
@@ -59,6 +78,7 @@ McRos2Controller::McRos2Controller()
       last_stand_action_request_time_(rclcpp::Time(0, 0, get_clock()->get_clock_type())),
       stand_action_accept_time_(rclcpp::Time(0, 0, get_clock()->get_clock_type())),
       previous_feedback_sample_time_(rclcpp::Time(0, 0, get_clock()->get_clock_type())),
+      control_gate_stable_since_time_(rclcpp::Time(0, 0, get_clock()->get_clock_type())),
       sequence_(0),
       last_forward_velocity_(0.0),
       last_lateral_velocity_(0.0),
@@ -72,8 +92,14 @@ McRos2Controller::McRos2Controller()
       walk_start_x_(0.0),
       walk_start_y_(0.0),
       walk_start_yaw_(0.0),
+      walk_target_x_(0.0),
+      walk_target_y_(0.0),
       walk_forward_delta_(0.0),
       walk_lateral_delta_(0.0),
+      target_forward_base_(0.0),
+      target_lateral_base_(0.0),
+      target_distance_(0.0),
+      yaw_error_to_target_(0.0),
       yaw_target_(0.0),
       yaw_error_integral_(0.0),
       previous_yaw_error_(0.0),
@@ -83,19 +109,30 @@ McRos2Controller::McRos2Controller()
       height_rate_(0.0),
       roll_rate_estimate_(0.0),
       pitch_rate_estimate_(0.0),
+      stand_probe_start_x_(0.0),
+      stand_probe_start_y_(0.0),
+      stand_probe_start_height_(0.0),
+      stand_probe_start_pitch_(0.0),
       has_odom_(false),
       has_leg_odom_(false),
       has_feedback_derivative_(false),
       walk_reference_set_(false),
+      walk_target_set_(false),
+      control_gate_stable_(false),
+      control_gate_pose_converged_(false),
+      control_gate_motion_allowed_(false),
       previous_yaw_error_valid_(false),
       stand_action_requested_(false),
       stand_action_accepted_(false),
       stand_action_fallback_used_(false),
+      safe_damping_requested_(false),
+      stand_probe_attempted_(false),
       stand_action_name_() {
   auto qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
   auto leg_odom_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort().transient_local();
 
   velocity_pub_ = create_publisher<LocomotionVelocity>(kVelocityTopic, qos);
+  upper_body_pub_ = create_publisher<UpperBodyCommandArray>("/mc/upper_body_command", qos);
   set_mc_action_client_ = create_client<SetMcAction>("/aimdk_5Fmsgs/srv/SetMcAction");
   odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
       "/aima/hal/odom/state",
@@ -126,7 +163,7 @@ McRos2Controller::McRos2Controller()
 
   writeControlTopicLog();
   std::ofstream("logs/control_stability.log", std::ios::trunc)
-      << "time state mode target filtered roll pitch yaw height stable fall\n";
+      << "time state mode target filtered roll pitch yaw height stable pose_converged motion_allowed yaw_error fall\n";
   std::ofstream("logs/state_transition_trace.log", std::ios::trunc)
       << "time from to reason odom_delta roll pitch height\n";
   std::ofstream("logs/odom_delta_tracking.log", std::ios::trunc)
@@ -140,7 +177,7 @@ McRos2Controller::McRos2Controller()
   RCLCPP_INFO(get_logger(), "MC source: %s", kSource);
   RCLCPP_WARN(
       get_logger(),
-      "STAND_UP uses 4-phase FSM: PRE_STABILIZE -> GET_UP -> STAND_LOCK -> READY_TO_WALK; official MC actions only, no velocity stand-up command.");
+      "STAND_UP safe mode: DAMPING_DEFAULT hold, then one guarded STAND_DEFAULT probe with drift/tilt abort.");
   RCLCPP_INFO(get_logger(), "STATE: %s", stateName(state_));
 }
 
@@ -173,6 +210,12 @@ const char* McRos2Controller::sourceName() const {
 void McRos2Controller::controlLoop() {
   const double elapsed = (now() - state_start_time_).seconds();
   last_stability_command_ = stability_controller_.update(stability_state_);
+  if (state_ == AutonomyState::WALK_TO_ZONE_1) {
+    updateWalkTargetInBaseFrame();
+  }
+  updateControlGate();
+  logControlGate();
+  appendControlStabilityLog(0.0, 0.0, 0.0, "CONTROL_GATE");
 
   if (state_ != AutonomyState::STAND_UP &&
       isFallDetected() &&
@@ -191,21 +234,50 @@ void McRos2Controller::controlLoop() {
   }
 
   if (state_ == AutonomyState::STAND_UP) {
+    publishCounterbalanceUpperBody(1.0);
+    const bool action_stalled_low =
+        (now() - stand_phase_start_time_).seconds() >= kGetUpStallSeconds &&
+        stand_up_phase_ == StandUpPhase::SIT_UP &&
+        stability_state_.base_height < kGetUpStallHeight &&
+        std::abs(stability_state_.pitch) > kGetUpStallPitch;
+    const bool stand_lock_collapsed =
+        (now() - stand_phase_start_time_).seconds() >= 1.5 &&
+        stand_up_phase_ == StandUpPhase::STAND_LOCK &&
+        stability_state_.base_height < kLowPoseAbortHeight;
+    if (stand_up_phase_ != StandUpPhase::PRE_STABILIZE &&
+        (isFallDetected() || action_stalled_low || stand_lock_collapsed)) {
+      if (!safe_damping_requested_) {
+        resetOfficialStandAction("DAMPING_DEFAULT");
+        safe_damping_requested_ = true;
+        RCLCPP_ERROR(
+            get_logger(),
+            "[STAND_UP] aborting get-up and switching to DAMPING_DEFAULT height=%.3f roll=%.3f pitch=%.3f",
+            stability_state_.base_height,
+            stability_state_.roll,
+            stability_state_.pitch);
+      }
+      requestOfficialStandUpAction();
+      return;
+    }
     runStandUpPhase();
     return;
   }
 
   if (state_ == AutonomyState::WALK_TO_ZONE_1) {
-    updateWalkDelta();
-    const double forward_error = kWalkTargetForwardMeters - walk_forward_delta_;
-    const double forward_cmd = clamp(0.80 * forward_error, 0.0, kMaxForwardVelocity);
-    const double lateral_cmd = clamp(-kLateralKp * walk_lateral_delta_, -kMaxLateralVelocity, kMaxLateralVelocity);
-    const double yaw_cmd = computeYawPid();
+    updateWalkTargetInBaseFrame();
+    const double forward_error = target_forward_base_;
+    const double yaw_cmd = computeYawPid(yaw_error_to_target_);
+    const double yaw_abs = std::abs(yaw_error_to_target_);
+    const double forward_scale =
+        yaw_abs > kWalkYawSlowThreshold ? 0.0 :
+        (yaw_abs > kWalkYawStartThreshold ? 0.35 : 1.0);
+    const double forward_cmd = forward_scale * clamp(0.80 * forward_error, 0.0, kMaxForwardVelocity);
+    const double lateral_cmd = clamp(kLateralKp * target_lateral_base_, -kMaxLateralVelocity, kMaxLateralVelocity);
     publishStabilityCheckedVelocity(forward_cmd, lateral_cmd, yaw_cmd);
 
     const bool target_reached =
-        std::abs(forward_error) <= kWalkTargetToleranceMeters &&
-        std::abs(walk_lateral_delta_) <= kWalkLateralToleranceMeters;
+        target_distance_ <= kWalkTargetToleranceMeters &&
+        std::abs(target_lateral_base_) <= kWalkLateralToleranceMeters;
     if (target_reached) {
       setState(AutonomyState::DONE);
     } else if (elapsed >= kWalkTimeoutSeconds) {
@@ -264,28 +336,116 @@ void McRos2Controller::runStandUpPhase() {
             pitch_rate_estimate_);
         return;
       }
-      resetOfficialStandAction("GET_UP_DEFAULT");
-      setStandUpPhase(StandUpPhase::GET_UP, "feedback_settled");
+      if (has_leg_odom_ && hasStableStandHeight() && hasStableStandOrientation()) {
+        resetOfficialStandAction("STAND_DEFAULT");
+        setStandUpPhase(StandUpPhase::STAND_LOCK, "already_upright_stable_height");
+        return;
+      }
+      resetOfficialStandAction(kEnablePostureInit ? "SIT_JOINT_DEFAULT" : "DAMPING_DEFAULT");
+      setStandUpPhase(StandUpPhase::SIT_INIT, "feedback_settled_crouch_pose");
       return;
 
-    case StandUpPhase::GET_UP:
+    case StandUpPhase::SIT_INIT:
+      requestOfficialStandUpAction();
+      if (!kEnablePostureInit) {
+        if (kEnableStandProbe &&
+            !stand_probe_attempted_ &&
+            stand_action_accepted_ &&
+            (now() - stand_phase_start_time_).seconds() >= kStandProbeDelaySeconds &&
+            isFeedbackSettledForAction()) {
+          stand_probe_attempted_ = true;
+          stand_probe_start_x_ = current_x_;
+          stand_probe_start_y_ = current_y_;
+          stand_probe_start_height_ = stability_state_.base_height;
+          stand_probe_start_pitch_ = stability_state_.pitch;
+          resetOfficialStandAction("STAND_DEFAULT");
+          setStandUpPhase(StandUpPhase::STAND_PROBE, "guarded_stand_probe_start");
+          return;
+        }
+        RCLCPP_WARN_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            1000,
+            "[STAND_UP][SAFE_HOLD] holding DAMPING_DEFAULT; stand_probe_attempted=%s posture/get-up actions disabled.",
+            stand_probe_attempted_ ? "true" : "false");
+        return;
+      }
+      if (!kEnableAutomaticSitUp) {
+        RCLCPP_WARN_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            1000,
+            "[STAND_UP][SAFE_HOLD] holding SIT_JOINT_DEFAULT; automatic SIT_UP_DEFAULT is disabled after backward-fall/fence contact.");
+        return;
+      }
+      if (stand_action_accepted_ &&
+          (now() - stand_phase_start_time_).seconds() >= 1.0 &&
+          isFeedbackSettledForAction()) {
+        resetOfficialStandAction("SIT_UP_DEFAULT");
+        setStandUpPhase(StandUpPhase::SIT_UP, "sit_joint_ready");
+      }
+      return;
+
+    case StandUpPhase::STAND_PROBE: {
+      requestOfficialStandUpAction();
+      const double elapsed = (now() - stand_phase_start_time_).seconds();
+      const double backward_drift = std::abs(current_y_ - stand_probe_start_y_);
+      const double height_drop = stand_probe_start_height_ - stability_state_.base_height;
+      const bool unsafe_probe =
+          std::abs(stability_state_.pitch) > kStandProbeMaxPitch ||
+          std::abs(stability_state_.roll) > kStandProbeMaxRoll ||
+          backward_drift > kStandProbeMaxBackwardDrift ||
+          height_drop > kStandProbeMaxHeightDrop ||
+          isFallDetected();
+      if (unsafe_probe) {
+        RCLCPP_ERROR(
+            get_logger(),
+            "[STAND_UP][STAND_PROBE] abort: height=%.3f roll=%.3f pitch=%.3f dy=%.3f height_drop=%.3f",
+            stability_state_.base_height,
+            stability_state_.roll,
+            stability_state_.pitch,
+            current_y_ - stand_probe_start_y_,
+            height_drop);
+        resetOfficialStandAction("DAMPING_DEFAULT");
+        setStandUpPhase(StandUpPhase::SIT_INIT, "stand_probe_unsafe_damping");
+        return;
+      }
+      if (stand_action_accepted_ && isGetUpActionCompleteByFeedback()) {
+        resetOfficialStandAction("STAND_DEFAULT");
+        setStandUpPhase(StandUpPhase::STAND_LOCK, "stand_probe_feedback_complete");
+        return;
+      }
+      if (elapsed >= kStandProbeTimeoutSeconds) {
+        RCLCPP_WARN(
+            get_logger(),
+            "[STAND_UP][STAND_PROBE] timeout without standing: height=%.3f roll=%.3f pitch=%.3f",
+            stability_state_.base_height,
+            stability_state_.roll,
+            stability_state_.pitch);
+        resetOfficialStandAction("DAMPING_DEFAULT");
+        setStandUpPhase(StandUpPhase::SIT_INIT, "stand_probe_timeout_damping");
+      }
+      return;
+    }
+
+    case StandUpPhase::SIT_UP:
       requestOfficialStandUpAction();
       if (stand_action_accepted_ && isGetUpActionCompleteByFeedback()) {
         resetOfficialStandAction("STAND_DEFAULT");
-        setStandUpPhase(StandUpPhase::STAND_LOCK, "get_up_feedback_complete");
+        setStandUpPhase(StandUpPhase::STAND_LOCK, "sit_up_feedback_complete");
       }
       return;
 
     case StandUpPhase::STAND_LOCK:
       requestOfficialStandUpAction();
-      if (stand_action_accepted_ && isStandReadyToWalk()) {
+      if (stand_action_accepted_ && controlGateMotionAllowed()) {
         stable_since_time_ = now();
         setStandUpPhase(StandUpPhase::READY_TO_WALK, "posture_converged");
       }
       return;
 
     case StandUpPhase::READY_TO_WALK:
-      if (!isStandReadyToWalk()) {
+      if (!controlGateMotionAllowed()) {
         stable_since_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
         resetOfficialStandAction("STAND_DEFAULT");
         setStandUpPhase(StandUpPhase::STAND_LOCK, "ready_gate_broken");
@@ -340,12 +500,16 @@ void McRos2Controller::setState(AutonomyState state) {
     stand_up_phase_ = StandUpPhase::PRE_STABILIZE;
     stand_phase_start_time_ = now();
     stable_since_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    control_gate_stable_since_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     last_stand_action_request_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     stand_action_accept_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     stand_action_requested_ = false;
     stand_action_accepted_ = false;
     stand_action_fallback_used_ = false;
+    safe_damping_requested_ = false;
+    stand_probe_attempted_ = false;
     stand_action_name_.clear();
+    walk_target_set_ = false;
   }
   if (state_ == AutonomyState::WALK_TO_ZONE_1) {
     resetWalkReference();
@@ -428,9 +592,7 @@ void McRos2Controller::publishStabilityCheckedVelocity(
     double forward_velocity,
     double lateral_velocity,
     double yaw_rate) {
-  const bool feedback_recent = hasRecentFeedback();
-
-  if (!feedback_recent || !last_stability_command_.stable) {
+  if (!controlGateMotionAllowed()) {
     publishCommand(0.0, 0.0, 0.0);
     appendControlStabilityLog(
         0.0,
@@ -439,11 +601,17 @@ void McRos2Controller::publishStabilityCheckedVelocity(
         "GATE_BLOCK");
     RCLCPP_INFO(
         get_logger(),
-        "[STABILITY] roll=%.3f pitch=%.3f height=%.3f status=UNSTABLE mode=GATE_BLOCK feedback=%s command=(0.000, 0.000, 0.000)",
+        "[CONTROL GATE] stable=%s pose_converged=%s motion_allowed=NO yaw_error=%.3f height=%.3f command=(0.000, 0.000, 0.000)",
+        control_gate_stable_ ? "YES" : "NO",
+        control_gate_pose_converged_ ? "YES" : "NO",
+        yaw_error_to_target_,
+        stability_state_.base_height);
+    RCLCPP_INFO(
+        get_logger(),
+        "[STABILITY] roll=%.3f pitch=%.3f height=%.3f mode=GATE_BLOCK command=(0.000, 0.000, 0.000)",
         stability_state_.roll,
         stability_state_.pitch,
-        stability_state_.base_height,
-        feedback_recent ? "recent" : "missing");
+        stability_state_.base_height);
     return;
   }
 
@@ -545,8 +713,8 @@ void McRos2Controller::updateFeedbackDerivative() {
   has_feedback_derivative_ = true;
 }
 
-double McRos2Controller::computeYawPid() {
-  const double yaw_error = normalizeAngle(yaw_target_ - stability_state_.yaw);
+double McRos2Controller::computeYawPid(double yaw_error) {
+  yaw_error = normalizeAngle(yaw_error);
   yaw_error_integral_ = clamp(
       yaw_error_integral_ + yaw_error * kControlPeriodSeconds,
       -kYawIntegralLimit,
@@ -565,12 +733,16 @@ void McRos2Controller::resetWalkReference() {
   walk_start_x_ = current_x_;
   walk_start_y_ = current_y_;
   walk_start_yaw_ = stability_state_.yaw;
-  yaw_target_ = stability_state_.yaw;
+  walk_target_x_ = walk_start_x_ + kZone1WorldDeltaX;
+  walk_target_y_ = walk_start_y_ + kZone1WorldDeltaY;
+  walk_target_set_ = true;
+  yaw_target_ = std::atan2(walk_target_y_ - current_y_, walk_target_x_ - current_x_);
   yaw_error_integral_ = 0.0;
   previous_yaw_error_ = 0.0;
   previous_yaw_error_valid_ = false;
   walk_reference_set_ = has_odom_;
   updateWalkDelta();
+  updateWalkTargetInBaseFrame();
 }
 
 void McRos2Controller::updateWalkDelta() {
@@ -586,6 +758,26 @@ void McRos2Controller::updateWalkDelta() {
   const double sin_yaw = std::sin(walk_start_yaw_);
   walk_forward_delta_ = dx * cos_yaw + dy * sin_yaw;
   walk_lateral_delta_ = -dx * sin_yaw + dy * cos_yaw;
+}
+
+void McRos2Controller::updateWalkTargetInBaseFrame() {
+  if (!walk_target_set_ || !has_odom_) {
+    target_forward_base_ = kWalkTargetForwardMeters;
+    target_lateral_base_ = 0.0;
+    target_distance_ = kWalkTargetForwardMeters;
+    yaw_error_to_target_ = 0.0;
+    return;
+  }
+
+  const double dx = walk_target_x_ - current_x_;
+  const double dy = walk_target_y_ - current_y_;
+  const double cos_yaw = std::cos(stability_state_.yaw);
+  const double sin_yaw = std::sin(stability_state_.yaw);
+  target_forward_base_ = dx * cos_yaw + dy * sin_yaw;
+  target_lateral_base_ = -dx * sin_yaw + dy * cos_yaw;
+  target_distance_ = std::hypot(dx, dy);
+  yaw_target_ = std::atan2(dy, dx);
+  yaw_error_to_target_ = normalizeAngle(yaw_target_ - stability_state_.yaw);
 }
 
 bool McRos2Controller::hasRecentFeedback() const {
@@ -613,6 +805,23 @@ bool McRos2Controller::isStandStable() const {
   return isStandReadyToWalk();
 }
 
+bool McRos2Controller::controlGateStable() const {
+  return hasStableStandHeight() &&
+         hasStableStandOrientation() &&
+         hasNoStandOscillation() &&
+         !isFallDetected();
+}
+
+bool McRos2Controller::controlGatePoseConverged() const {
+  return control_gate_stable_ &&
+         control_gate_stable_since_time_.nanoseconds() != 0 &&
+         (now() - control_gate_stable_since_time_).seconds() >= kControlGatePoseConvergedSeconds;
+}
+
+bool McRos2Controller::controlGateMotionAllowed() const {
+  return control_gate_stable_ && control_gate_pose_converged_;
+}
+
 bool McRos2Controller::hasStandFeedback() const {
   return hasRecentFeedback() &&
          has_odom_ &&
@@ -623,6 +832,7 @@ bool McRos2Controller::hasStandFeedback() const {
 
 bool McRos2Controller::isFeedbackSettledForAction() const {
   return hasStandFeedback() &&
+         std::abs(height_rate_) <= kPreActionMaxHeightRate &&
          std::abs(stability_state_.roll_rate) <= kPreStabilizeMaxTiltRate &&
          std::abs(stability_state_.pitch_rate) <= kPreStabilizeMaxTiltRate &&
          std::abs(roll_rate_estimate_) <= kPreStabilizeMaxTiltRate &&
@@ -660,10 +870,7 @@ bool McRos2Controller::isGetUpActionCompleteByFeedback() const {
 }
 
 bool McRos2Controller::isStandReadyToWalk() const {
-  return hasStableStandHeight() &&
-         hasStableStandOrientation() &&
-         hasNoStandOscillation() &&
-         !isFallDetected();
+  return controlGateMotionAllowed();
 }
 
 void McRos2Controller::resetOfficialStandAction(const std::string& action_name) {
@@ -708,19 +915,21 @@ void McRos2Controller::requestOfficialStandUpAction() {
 
   auto request = std::make_shared<SetMcAction::Request>();
   request->header.stamp = now();
-  request->source = "node";
+  request->source = "rc";
   request->command.action_desc = stand_action_name_;
 
   stand_action_requested_ = true;
   last_stand_action_request_time_ = now();
   const char* auto_next =
-      stand_action_name_ == "LIE_UP_DEFAULT"
-          ? "GROUNDUP -> STAND_DEFAULT"
-          : (stand_action_name_ == "GET_UP_DEFAULT"
-                 ? "PRONE_UP_DEFAULT -> STAND_DEFAULT"
-                 : (stand_action_name_ == "JOINT_DEFAULT"
-                        ? "joint lock stand"
-                        : "balance hold"));
+      stand_action_name_ == "SIT_JOINT_DEFAULT"
+          ? "official sit posture init"
+          : (stand_action_name_ == "SIT_UP_DEFAULT"
+                 ? "official sit-up to stand"
+                 : (stand_action_name_ == "STAND_DEFAULT"
+                        ? "official stable stand auto-balance"
+                        : (stand_action_name_ == "DAMPING_DEFAULT"
+                               ? "safe damping stop"
+                               : "official MC action")));
   RCLCPP_INFO(
       get_logger(),
       "[STAND_UP] calling official MC action %s (auto-next: %s)",
@@ -758,6 +967,36 @@ void McRos2Controller::handleStandUpActionResponse(rclcpp::Client<SetMcAction>::
   }
 }
 
+void McRos2Controller::updateControlGate() {
+  control_gate_stable_ = controlGateStable();
+  if (control_gate_stable_) {
+    if (control_gate_stable_since_time_.nanoseconds() == 0) {
+      control_gate_stable_since_time_ = now();
+    }
+  } else {
+    control_gate_stable_since_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+  }
+
+  control_gate_pose_converged_ = controlGatePoseConverged();
+  control_gate_motion_allowed_ = controlGateMotionAllowed();
+}
+
+void McRos2Controller::logControlGate() {
+  RCLCPP_INFO(
+      get_logger(),
+      "[CONTROL GATE] stable=%s pose_converged=%s motion_allowed=%s yaw_error=%.3f height=%.3f roll=%.3f pitch=%.3f rates=(%.3f, %.3f, %.3f)",
+      control_gate_stable_ ? "YES" : "NO",
+      control_gate_pose_converged_ ? "YES" : "NO",
+      control_gate_motion_allowed_ ? "YES" : "NO",
+      yaw_error_to_target_,
+      stability_state_.base_height,
+      stability_state_.roll,
+      stability_state_.pitch,
+      height_rate_,
+      roll_rate_estimate_,
+      pitch_rate_estimate_);
+}
+
 void McRos2Controller::publishGuardedStop() {
   publishCommand(0.0, 0.0, 0.0);
   appendControlStabilityLog(0.0, 0.0, 0.0, "FALL_GUARD");
@@ -776,6 +1015,22 @@ void McRos2Controller::publishGuardedStop() {
 
 void McRos2Controller::publishCommand(double forward_velocity, double lateral_velocity, double yaw_rate) {
   publishVelocity(forward_velocity, lateral_velocity, yaw_rate);
+}
+
+void McRos2Controller::publishCounterbalanceUpperBody(double intensity) {
+  UpperBodyCommandArray upper_body;
+  fillHeader(upper_body.header);
+  upper_body.header.frame_id = "mc_upper_body";
+  upper_body.source = "remote_teleop_pc";
+  upper_body.hand_sub_mode = 0;
+  const double gain = clamp(intensity, 0.0, 1.0);
+  upper_body.head_pos = {0.0, 0.10 * gain};
+  upper_body.arm_pos = {
+      0.65 * gain, 0.18 * gain, 0.0, -0.55, 0.0, 0.0, 0.0,
+      0.65 * gain, -0.18 * gain, 0.0, -0.55, 0.0, 0.0, 0.0,
+  };
+  upper_body.hand_pos = {};
+  upper_body_pub_->publish(upper_body);
 }
 
 double McRos2Controller::smoothAxis(double target, double previous, double alpha, double max_delta) const {
@@ -852,6 +1107,13 @@ void McRos2Controller::writeControlTopicLog() {
   log << "height_rate=" << height_rate_ << "\n";
   log << "roll_rate_estimate=" << roll_rate_estimate_ << "\n";
   log << "pitch_rate_estimate=" << pitch_rate_estimate_ << "\n";
+  log << "control_gate_stable=" << (control_gate_stable_ ? "true" : "false") << "\n";
+  log << "control_gate_pose_converged=" << (control_gate_pose_converged_ ? "true" : "false") << "\n";
+  log << "control_gate_motion_allowed=" << (control_gate_motion_allowed_ ? "true" : "false") << "\n";
+  log << "control_gate_yaw_error=" << yaw_error_to_target_ << "\n";
+  log << "walk_target_base_forward=" << target_forward_base_ << "\n";
+  log << "walk_target_base_lateral=" << target_lateral_base_ << "\n";
+  log << "walk_target_distance=" << target_distance_ << "\n";
   log << "stand_ready_to_walk=" << (isStandReadyToWalk() ? "true" : "false") << "\n";
   log << "walk_forward_delta=" << walk_forward_delta_ << "\n";
   log << "walk_lateral_delta=" << walk_lateral_delta_ << "\n";
@@ -876,7 +1138,10 @@ void McRos2Controller::appendControlStabilityLog(
       << " pitch=" << stability_state_.pitch
       << " yaw=" << stability_state_.yaw
       << " height=" << stability_state_.base_height
-      << " stable=" << (last_stability_command_.stable ? "true" : "false")
+      << " stable=" << (control_gate_stable_ ? "true" : "false")
+      << " pose_converged=" << (control_gate_pose_converged_ ? "true" : "false")
+      << " motion_allowed=" << (control_gate_motion_allowed_ ? "true" : "false")
+      << " yaw_error=" << yaw_error_to_target_
       << " fall=" << (isFallDetected() ? "true" : "false")
       << "\n";
 }
@@ -923,7 +1188,7 @@ void McRos2Controller::appendStandUpConvergenceLog() {
   std::filesystem::create_directories("logs");
   std::ofstream log("logs/stand_up_convergence.log", std::ios::app);
   const double stable_for =
-      stable_since_time_.nanoseconds() == 0 ? 0.0 : (now() - stable_since_time_).seconds();
+      control_gate_stable_since_time_.nanoseconds() == 0 ? 0.0 : (now() - control_gate_stable_since_time_).seconds();
   log << now().seconds()
       << " phase=" << standUpPhaseName(stand_up_phase_)
       << " action=" << stand_action_name_
@@ -941,6 +1206,8 @@ void McRos2Controller::appendStandUpConvergenceLog() {
       << " stable_orientation=" << (hasStableStandOrientation() ? "true" : "false")
       << " no_oscillation=" << (hasNoStandOscillation() ? "true" : "false")
       << " ready=" << (isStandReadyToWalk() ? "true" : "false")
+      << " pose_converged=" << (control_gate_pose_converged_ ? "true" : "false")
+      << " motion_allowed=" << (control_gate_motion_allowed_ ? "true" : "false")
       << " stable_for=" << stable_for
       << "\n";
 }
@@ -949,8 +1216,12 @@ const char* McRos2Controller::standUpPhaseName(StandUpPhase phase) {
   switch (phase) {
     case StandUpPhase::PRE_STABILIZE:
       return "PRE_STABILIZE";
-    case StandUpPhase::GET_UP:
-      return "GET_UP";
+    case StandUpPhase::SIT_INIT:
+      return "SIT_INIT";
+    case StandUpPhase::STAND_PROBE:
+      return "STAND_PROBE";
+    case StandUpPhase::SIT_UP:
+      return "SIT_UP";
     case StandUpPhase::STAND_LOCK:
       return "STAND_LOCK";
     case StandUpPhase::READY_TO_WALK:
@@ -968,8 +1239,9 @@ void McRos2Controller::appendOdomDeltaLog() {
       << " position=(" << current_x_ << "," << current_y_ << "," << current_z_ << ")"
       << " walk_delta=(" << walk_forward_delta_ << "," << walk_lateral_delta_ << ")"
       << " target_forward=" << kWalkTargetForwardMeters
-      << " forward_error=" << (kWalkTargetForwardMeters - walk_forward_delta_)
-      << " lateral_error=" << walk_lateral_delta_
-      << " yaw_error=" << normalizeAngle(yaw_target_ - stability_state_.yaw)
+      << " target_base=(" << target_forward_base_ << "," << target_lateral_base_ << ")"
+      << " forward_error=" << target_forward_base_
+      << " lateral_error=" << target_lateral_base_
+      << " yaw_error=" << yaw_error_to_target_
       << "\n";
 }

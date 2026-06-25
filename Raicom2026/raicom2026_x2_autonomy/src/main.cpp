@@ -4,9 +4,9 @@
 #include <filesystem>
 #include <vector>
 
-#include "mc_control_inspector.h"
-#include "mc_ros2_controller.h"
-#include "robot_state_monitor.h"
+#include "mc_state_checker.h"
+#include "preset_motion_wrapper.h"
+#include "stability_wait_node.h"
 
 namespace {
 void preloadAimdkTypesupport(const char* argv0) {
@@ -43,14 +43,46 @@ int main(int argc, char** argv) {
   rclcpp::init(argc, argv);
 
   std::cout << "START AUTONOMY SYSTEM" << std::endl;
-  auto controller = std::make_shared<McRos2Controller>();
-  auto inspector = std::make_shared<McControlInspector>(controller);
-  auto monitor = std::make_shared<RobotStateMonitor>(controller, inspector);
+  auto orchestrator = std::make_shared<rclcpp::Node>("raicom2026_official_mc_orchestrator");
+  auto stability_wait = std::make_shared<StabilityWaitNode>();
+  McStateChecker mc_state(orchestrator);
+  PresetMotionWrapper preset(orchestrator);
+
+  RCLCPP_INFO(orchestrator->get_logger(), "[FLOW] STEP 1 wait for user reset drop");
+
+  auto run_action = [&](const std::string& action_name, double timeout_seconds) {
+    RCLCPP_INFO(orchestrator->get_logger(), "[FLOW] SetMcAction %s", action_name.c_str());
+    return mc_state.setAction(action_name, "node") &&
+           mc_state.waitForAction(action_name, timeout_seconds);
+  };
+
+  bool ok = stability_wait->waitForResetDrop(120.0);
+
+  if (ok) {
+    RCLCPP_INFO(orchestrator->get_logger(), "[FLOW] STEP 2 SetMcAction SD after reset");
+    ok = run_action("STAND_DEFAULT", 8.0);
+  }
+
+  if (ok) {
+    RCLCPP_INFO(orchestrator->get_logger(), "[FLOW] STEP 3 wait stable after SD");
+    ok = stability_wait->waitUntilStable(3.0, 15.0);
+  }
+
+  if (ok) {
+    RCLCPP_INFO(orchestrator->get_logger(), "[FLOW] STEP 4 SetMcAction LOCOMOTION_DEFAULT");
+    ok = run_action("LOCOMOTION_DEFAULT", 8.0);
+  }
+
+  if (ok) {
+    RCLCPP_INFO(orchestrator->get_logger(), "[FLOW] STEP 5 start continuous navigation loop");
+    preset.publishZone1Goal();
+  } else {
+    RCLCPP_ERROR(orchestrator->get_logger(), "[FLOW] aborted before continuous navigation");
+  }
 
   rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(controller);
-  executor.add_node(inspector);
-  executor.add_node(monitor);
+  executor.add_node(orchestrator);
+  executor.add_node(stability_wait);
 
   while (rclcpp::ok()) {
     executor.spin_some();

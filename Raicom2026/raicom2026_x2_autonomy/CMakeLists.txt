@@ -24,16 +24,13 @@ set(AIMDK_MSGS_LIBRARY_DIR "${RAICOM_ROOT}/mc/lib")
 
 add_executable(raicom2026_x2_autonomy
   src/main.cpp
-  src/state_machine.cpp
-  src/controller.cpp
-  src/planner.cpp
-  src/stability_controller.cpp
-  src/mc_ros2_controller.cpp
-  src/mc_control_inspector.cpp
-  src/robot_state_monitor.cpp
+  src/mc_state_checker.cpp
+  src/stability_wait_node.cpp
+  src/preset_motion_wrapper.cpp
 )
 
 target_include_directories(raicom2026_x2_autonomy PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/include"
   "${AIMDK_MSGS_INCLUDE_DIR}"
 )
 
