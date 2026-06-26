@@ -25,6 +25,7 @@ class PresetMotionWrapper {
   void handleOdom(const nav_msgs::msg::Odometry::SharedPtr msg);
   void handleImu(const sensor_msgs::msg::Imu::SharedPtr msg);
   void publishNavigationVelocity();
+  double normalizeAngle(double angle) const;
 
   rclcpp::Node::SharedPtr node_;
   rclcpp::Publisher<LocomotionVelocity>::SharedPtr locomotion_pub_;
@@ -41,6 +42,7 @@ class PresetMotionWrapper {
   double current_x_;
   double current_y_;
   double current_yaw_;
+  double rotate_target_yaw_;
   double raw_x_;
   double raw_y_;
   double raw_yaw_;
@@ -48,4 +50,5 @@ class PresetMotionWrapper {
   bool has_yaw_;
   bool input_source_registered_;
   bool navigation_active_;
+  bool rotate_after_arrival_active_;
 };

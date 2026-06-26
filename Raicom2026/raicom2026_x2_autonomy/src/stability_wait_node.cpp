@@ -11,7 +11,8 @@ constexpr double kResetDropTiltMax = 0.35;
 constexpr double kStandingResetHeightMin = 0.45;
 constexpr double kStandingResetHeightMax = 0.95;
 constexpr double kStandingResetTiltMax = 0.20;
-constexpr double kMaxStableRollPitch = 0.30;
+constexpr double kMaxStableRoll = 0.30;
+constexpr double kMaxStablePitch = 0.50;
 constexpr double kMaxStableHeightRate = 0.04;
 constexpr double kMaxStableTiltRate = 0.12;
 }
@@ -88,8 +89,8 @@ bool StabilityWaitNode::stableNow() const {
          has_height_ &&
          has_orientation_ &&
          has_derivative_ &&
-         std::abs(roll_) <= kMaxStableRollPitch &&
-         std::abs(pitch_) <= kMaxStableRollPitch &&
+         std::abs(roll_) <= kMaxStableRoll &&
+         std::abs(pitch_) <= kMaxStablePitch &&
          std::abs(height_rate_) <= kMaxStableHeightRate &&
          std::abs(roll_rate_) <= kMaxStableTiltRate &&
          std::abs(pitch_rate_) <= kMaxStableTiltRate;

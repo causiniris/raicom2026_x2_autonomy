@@ -7,15 +7,17 @@
 #include <unistd.h>
 
 namespace {
-constexpr double kDefaultZone1X = 0.0;
-constexpr double kDefaultZone1Y = 1.75;
+constexpr double kDefaultZone1X = -0.10;
+constexpr double kDefaultZone1Y = 1.60;
 constexpr double kStopDistance = 0.20;
-constexpr double kMaxForwardVelocity = 0.18;
-constexpr double kMaxLateralVelocity = 0.08;
-constexpr double kMaxYawRate = 0.50;
-constexpr double kForwardKp = 0.45;
+constexpr double kRotateAfterArrivalDegrees = 150.0;
+constexpr double kRotateCompletionTolerance = 0.08;
+constexpr double kMaxForwardVelocity = 0.28;
+constexpr double kMaxLateralVelocity = 0.10;
+constexpr double kMaxYawRate = 0.70;
+constexpr double kForwardKp = 0.60;
 constexpr double kLateralKp = 0.35;
-constexpr double kYawKp = 1.20;
+constexpr double kYawKp = 1.35;
 constexpr int32_t kMcInputActionAdd = 1001;
 constexpr int32_t kInputSourcePriority = 40;
 constexpr int32_t kInputSourceTimeoutMs = 1000;
@@ -34,6 +36,10 @@ double readTargetCoordinate(const char* env_name, double default_value) {
   const double parsed = std::strtod(value, &end);
   return (end != value) ? parsed : default_value;
 }
+
+double degreesToRadians(double degrees) {
+  return degrees * M_PI / 180.0;
+}
 }  // namespace
 
 PresetMotionWrapper::PresetMotionWrapper(const rclcpp::Node::SharedPtr& node)
@@ -45,13 +51,15 @@ PresetMotionWrapper::PresetMotionWrapper(const rclcpp::Node::SharedPtr& node)
       current_x_(0.0),
       current_y_(0.0),
       current_yaw_(0.0),
+      rotate_target_yaw_(0.0),
       raw_x_(0.0),
       raw_y_(0.0),
       raw_yaw_(0.0),
       has_odom_(false),
       has_yaw_(false),
       input_source_registered_(false),
-      navigation_active_(false) {
+      navigation_active_(false),
+      rotate_after_arrival_active_(false) {
   auto qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
   auto leg_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort().transient_local();
 
@@ -135,6 +143,7 @@ void PresetMotionWrapper::publishZone1Goal() {
   }
 
   navigation_active_ = true;
+  rotate_after_arrival_active_ = false;
   RCLCPP_INFO(
       node_->get_logger(),
       "[NAV_GOAL] enabling locomotion control toward zone_1=(%.2f, %.2f) source=%s",
@@ -183,6 +192,12 @@ void PresetMotionWrapper::handleImu(const sensor_msgs::msg::Imu::SharedPtr msg) 
   has_yaw_ = true;
 }
 
+double PresetMotionWrapper::normalizeAngle(double angle) const {
+  while (angle > M_PI) angle -= 2.0 * M_PI;
+  while (angle < -M_PI) angle += 2.0 * M_PI;
+  return angle;
+}
+
 void PresetMotionWrapper::publishNavigationVelocity() {
   LocomotionVelocity velocity;
   velocity.header.stamp = node_->now();
@@ -191,7 +206,7 @@ void PresetMotionWrapper::publishNavigationVelocity() {
   velocity.header.sequence = 0;
   velocity.source = input_source_name_;
 
-  if (!navigation_active_ || !has_odom_ || !has_yaw_) {
+  if ((!navigation_active_ && !rotate_after_arrival_active_) || !has_odom_ || !has_yaw_) {
     velocity.forward_velocity = 0.0;
     velocity.lateral_velocity = 0.0;
     velocity.angular_velocity = 0.0;
@@ -200,8 +215,9 @@ void PresetMotionWrapper::publishNavigationVelocity() {
         node_->get_logger(),
         *node_->get_clock(),
         1000,
-        "[NAV_GOAL] waiting feedback active=%s has_odom=%s has_yaw=%s",
+        "[NAV_GOAL] waiting feedback nav_active=%s rotate_active=%s has_odom=%s has_yaw=%s",
         navigation_active_ ? "YES" : "NO",
+        rotate_after_arrival_active_ ? "YES" : "NO",
         has_odom_ ? "YES" : "NO",
         has_yaw_ ? "YES" : "NO");
     return;
@@ -211,36 +227,55 @@ void PresetMotionWrapper::publishNavigationVelocity() {
   const double dy = target_y_ - current_y_;
   const double distance = std::hypot(dx, dy);
 
-  if (distance <= kStopDistance) {
+  if (navigation_active_ && distance <= kStopDistance) {
     navigation_active_ = false;
+    rotate_after_arrival_active_ = true;
+    rotate_target_yaw_ =
+        normalizeAngle(current_yaw_ - degreesToRadians(kRotateAfterArrivalDegrees));
+    RCLCPP_INFO(
+        node_->get_logger(),
+        "[NAV_GOAL] zone_1 reached current=(%.3f, %.3f) distance=%.3f rotate_target_yaw=%.3f",
+        current_x_,
+        current_y_,
+        distance,
+        rotate_target_yaw_);
+  }
+
+  double yaw_error = 0.0;
+  if (rotate_after_arrival_active_) {
+    yaw_error = normalizeAngle(rotate_target_yaw_ - current_yaw_);
+    velocity.forward_velocity = 0.0;
+    velocity.lateral_velocity = 0.0;
+    velocity.angular_velocity = clamp(kYawKp * yaw_error, -kMaxYawRate, kMaxYawRate);
+
+    if (std::abs(yaw_error) <= kRotateCompletionTolerance) {
+      rotate_after_arrival_active_ = false;
+      velocity.angular_velocity = 0.0;
+      RCLCPP_INFO(
+          node_->get_logger(),
+          "[NAV_GOAL] post-zone rotation complete yaw=%.3f target=%.3f",
+          current_yaw_,
+          rotate_target_yaw_);
+    }
+  } else if (navigation_active_) {
+    const double cos_yaw = std::cos(current_yaw_);
+    const double sin_yaw = std::sin(current_yaw_);
+    const double forward_base = dx * cos_yaw + dy * sin_yaw;
+    const double lateral_base = -dx * sin_yaw + dy * cos_yaw;
+    const double yaw_target = std::atan2(dy, dx);
+    yaw_error = normalizeAngle(yaw_target - current_yaw_);
+
+    velocity.forward_velocity = clamp(kForwardKp * forward_base, 0.0, kMaxForwardVelocity);
+    velocity.lateral_velocity = clamp(kLateralKp * lateral_base, -kMaxLateralVelocity, kMaxLateralVelocity);
+    velocity.angular_velocity = clamp(kYawKp * yaw_error, -kMaxYawRate, kMaxYawRate);
+
+    if (std::abs(yaw_error) > 0.45) {
+      velocity.forward_velocity = std::min(velocity.forward_velocity, 0.12);
+    }
+  } else {
     velocity.forward_velocity = 0.0;
     velocity.lateral_velocity = 0.0;
     velocity.angular_velocity = 0.0;
-    locomotion_pub_->publish(velocity);
-    RCLCPP_INFO(
-        node_->get_logger(),
-        "[NAV_GOAL] zone_1 reached current=(%.3f, %.3f) distance=%.3f",
-        current_x_,
-        current_y_,
-        distance);
-    return;
-  }
-
-  const double cos_yaw = std::cos(current_yaw_);
-  const double sin_yaw = std::sin(current_yaw_);
-  const double forward_base = dx * cos_yaw + dy * sin_yaw;
-  const double lateral_base = -dx * sin_yaw + dy * cos_yaw;
-  const double yaw_target = std::atan2(dy, dx);
-  double yaw_error = yaw_target - current_yaw_;
-  while (yaw_error > M_PI) yaw_error -= 2.0 * M_PI;
-  while (yaw_error < -M_PI) yaw_error += 2.0 * M_PI;
-
-  velocity.forward_velocity = clamp(kForwardKp * forward_base, 0.0, kMaxForwardVelocity);
-  velocity.lateral_velocity = clamp(kLateralKp * lateral_base, -kMaxLateralVelocity, kMaxLateralVelocity);
-  velocity.angular_velocity = clamp(kYawKp * yaw_error, -kMaxYawRate, kMaxYawRate);
-
-  if (std::abs(yaw_error) > 0.45) {
-    velocity.forward_velocity = std::min(velocity.forward_velocity, 0.06);
   }
 
   locomotion_pub_->publish(velocity);

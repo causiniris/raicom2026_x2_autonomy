@@ -23,6 +23,14 @@
 - `config/`
 - `DOCS/`
 
+## 2026-06-26 导航与到点转向调优
+
+- 修改点：更新 `raicom2026_x2_autonomy/src/preset_motion_wrapper.cpp/.h`，将默认 `zone_1` 目标调整为 `(-0.10, 1.60)`；提高前进、侧移、偏航控制上限；新增到达 `zone_1` 后顺时针原地旋转 `150` 度的二阶段控制；修正到点后旋转阶段被提前停掉的问题。
+- 修改点：更新 `raicom2026_x2_autonomy/src/stability_wait_node.cpp`，将稳定性判断拆分为独立 `roll`/`pitch` 阈值，并将 `pitch` 放宽到适配当前仿真站姿偏置。
+- 修改原因：需要让机器人更快到达目标点，并在到点后完成固定角度转向；同时修复当前仿真里 `STEP 1` 因俯仰偏置被误判为不稳定、导致无法进入导航的问题。
+- 影响范围：仅修改 `../raicom2026_x2_autonomy/` 下 autonomy 导航与稳定性判断代码；未修改官方目录。
+- 如何验证：在容器内重启 `run_all.sh`，确认日志包含 `STEP1_RESULT stable_stand=true`、`STEP3_RESULT filtered_navigation=true`、`NAV_GOAL zone_1 reached ... rotate_target_yaw=...` 和 `NAV_GOAL post-zone rotation complete ...`，并在仿真中观察机器人行走到 `zone_1=(-0.10,1.60)` 后顺时针继续旋转。
+
 ## 2026-06-24 结构整理记录
 
 ### 目录结构调整说明
