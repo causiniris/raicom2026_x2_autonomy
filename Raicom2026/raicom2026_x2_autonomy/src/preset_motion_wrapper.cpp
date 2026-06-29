@@ -7,7 +7,7 @@
 #include <unistd.h>
 
 namespace {
-constexpr double kDefaultZone1X = -0.10;
+constexpr double kDefaultZone1X = -0.05;
 constexpr double kDefaultZone1Y = 1.60;
 constexpr double kStopDistance = 0.20;
 constexpr double kRotateAfterArrivalDegrees = 150.0;

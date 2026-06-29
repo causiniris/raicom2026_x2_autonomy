@@ -1,56 +1,153 @@
 
-# 操作手册
-## 环境要求
+# Raicom2026 比赛交付说明
 
-推荐使用 docker 方式运行仿真环境，如需本地运行仿真，请仿照 dockerfile/Dockerfile 中的内容自行安装对应依赖等。以下教程均基于 docker 方式运行。
+## 1. 项目简介
 
-1. 安装有 docker 的 x86 架构 linux 系统电脑
+本项目面向睿抗 2026 具身智能服务机器人赛题，目标是在官方 `sim_mujoco + mc` 环境上完成自主控制链路接入，实现从 `RESET` 后自动站立、进入 locomotion、导航到 `zone_1`，并继续执行后续动作。
 
-   1. docker 安装教程：https://docs.docker.com/engine/install/
+当前交付目录由三部分组成：
 
-   2. 确保可以正常运行 `docker run hello-world`
+- 官方环境层：`sim_mujoco/`、`mc/`、`aimdk-aarch64-1bde262f-artifacts/`、`aimdk_msgs/`
+- 用户控制层：`raicom2026_x2_autonomy/`
+- 运行辅助层：`scripts/`、`launch/`、`config/`
 
-2. 使用 x11 桌面系统
+目录结构：
 
-   * 可以通过 `echo $XDG_SESSION_TYPE` 来检测，输出 x11 为期望现象
-
-3. 系统性能不太低，可流畅运行 mujoco 仿真，无需 GPU 加速
-
-
-## 获取 mc 、sim_mujoco 以及aimdk_msgs 包
-可在赛事交流群获取。您将获得三个包：
-* mc_x86_v1.0.0_raicom26.zip：机器人控制模块，用于控制机器人运动
-* sim_mujoco-x86-v1.0.0-raicom26.zip：仿真环境，用于模拟机器人在真实世界中的运动
-* aimdk-aarch64-1bde262f-artifacts.zip：消息定义，用于通信
-
-
-将下载的三个包解压到Raicom2026路径的根目录下，目录结构如下：
-```bash
-Raicom2026
-├── aimdk-aarch64-1bde262f-artifacts <----------- aimdk_msgs 包
+```text
+Raicom2026/
+├── aimdk-aarch64-1bde262f-artifacts/
+├── aimdk_msgs/
+├── mc/
+├── sim_mujoco/
+├── raicom2026_x2_autonomy/
+├── scripts/
+├── launch/
+├── config/
 ├── Dockerfile
-├── document
-│   └── images
-├── mc <----------- mc 预编译包
-├── sim_mujoco <----------- sim_mujoco 预编译包
-├── example
 └── README.md
 ```
 
-## 镜像构建
-在Raicom2026路径的根目录下。运行如下指令
+## 2. 系统架构
+
+系统采用三层结构：
+
+1. `sim_mujoco`
+   负责机器人仿真、物理环境和可视化窗口。
+2. `mc`
+   负责底层运动控制执行，消费 locomotion 指令并输出机器人运动行为。
+3. `raicom2026_x2_autonomy`
+   负责自主状态流转、稳定性判断、里程计处理、目标点导航和到点后动作控制。
+
+ROS2 通信链路如下：
+
+```text
+raicom2026_x2_autonomy
+  -> /aima/mc/locomotion/velocity
+  -> mc
+  -> sim_mujoco
+
+反馈订阅：
+  /aima/hal/odom/state
+  /aima/mc/leg_odometry
+  /aima/hal/imu/torso/state
+  /aima/hal/imu/chest/state
 ```
-docker build -t lingxi-x2-env:v1.0 .
+
+当前确认实际使用的控制 topic：
+
+- `/aima/mc/locomotion/velocity`
+
+当前确认实际使用的反馈 topic：
+
+- `/aima/hal/odom/state`
+- `/aima/mc/leg_odometry`
+- `/aima/hal/imu/torso/state`
+- `/aima/hal/imu/chest/state`
+
+## 3. 控制流程
+
+当前主流程为：
+
+```text
+RESET -> STAND_UP -> WALK_TO_ZONE_1 -> DANCE
 ```
-初次运行时间较长，请耐心等待镜像构建完成，下载源替换为中国境内易访问源以加速下载，如遇某步骤下载缓慢甚至卡死请尝试切换网络环境后重试。
 
-若 docker build 过程拉取基础镜像超时，需自行配置镜像源。
+对应运行逻辑：
 
-### UID/GID 权限说明
+1. `RESET`
+   等待仿真中的 reset 姿态被检测到。
+2. `STAND_UP`
+   调用 `STAND_DEFAULT`，等待姿态稳定。
+3. `WALK_TO_ZONE_1`
+   切换到 `LOCOMOTION_DEFAULT`，开始向目标区域导航。
+4. `DANCE`
+   导航结束后进入预设的后续动作阶段。
 
-Dockerfile 默认会在镜像中创建 `agi` 用户，默认 UID/GID 均为 `1001`。如果宿主机当前用户不是 `1001:1001`，挂载当前目录到容器后，可能出现容器内无法写入工作目录、生成文件归属异常等权限问题。
+当前自主入口脚本为：
 
-推荐在构建镜像时将容器用户 UID/GID 设置为宿主机当前用户：
+```bash
+/home/agi/x2_deploy_workspace/scripts/run_all.sh
+```
+
+## 4. 关键算法
+
+### 4.1 yaw control
+
+导航阶段会根据当前位置与目标点计算目标朝向 `yaw_target`，再由 `yaw_error = yaw_target - current_yaw` 生成偏航角速度指令，通过比例控制限制最大角速度，避免快速摆头。
+
+到达 `zone_1` 后，系统会进入二阶段控制，切换到原地旋转模式，继续使用 `yaw_error` 收敛到目标朝向。
+
+### 4.2 odom filtering
+
+导航控制并不直接使用单帧原始 odom，而是对 odom 做滑动均值滤波，降低位置和偏航抖动。当前代码中同时保留：
+
+- `raw_x/raw_y/raw_yaw`
+- `filtered current_x/current_y/current_yaw`
+
+最终导航和到点判定使用滤波后的位姿。
+
+### 4.3 zone navigation
+
+`zone_1` 使用固定目标坐标，当前默认值为：
+
+```text
+zone_1 = (-0.05, 1.60)
+```
+
+导航控制使用：
+
+- 前向速度控制
+- 侧向速度控制
+- 偏航速度控制
+
+并在距离目标小于停止阈值后切换到到点后原地旋转阶段。
+
+## 5. 运行方式
+
+以下命令基于 Ubuntu 22.04 + ROS2 Humble。
+
+### 5.1 进入交付目录
+
+压缩包解压后，必须进入 `Raicom2026/` 目录执行后续命令：
+
+```bash
+cd Raicom2026
+```
+
+原因是 Docker 挂载使用：
+
+```bash
+-v .:/home/agi/x2_deploy_workspace
+```
+
+因此当前目录下必须直接包含：
+
+- `sim_mujoco/`
+- `mc/`
+- `raicom2026_x2_autonomy/`
+- `scripts/`
+
+### 5.2 Docker 镜像构建
 
 ```bash
 docker build \
@@ -59,49 +156,15 @@ docker build \
   -t lingxi-x2-env:v1.0 .
 ```
 
-如需保留默认值，也可以继续使用：
+### 5.3 Docker 启动
 
-```bash
-docker build -t lingxi-x2-env:v1.0 .
-```
-
-成功后可执行以下命令检查镜像是否已经存在
-
-```bash
-docker images | grep lingxi-x2-env
-```
-如果下载仍超时，可尝试下放操作：
-
-```
-#终端输入：
-sudo nano /etc/docker/daemon.json
-
-#将下述指令写入上述文件（换源地址根据实际情况修改）
-{
-  "registry-mirrors": [
-    "https://docker.1ms.run",
-    "https://docker.xuanyuan.me",
-    "https://docker.m.daocloud.io"
-  ]
-}
-
-#重启docker服务
-sudo systemctl daemon-reload
-sudo systemctl restart docker
-```
-
-
-
-## 镜像启动
-首先在宿主机上运行以下命令，使得容器内可以运行 GUI 程序显示仿真窗口
-
-> 允许docker访问显示器，用于配置 X Window System 的访问控制列表。执行 xhost + 会允许所有的主机连接到当前用户的 X 服务器，这样做会取消 X 服务器的访问控制，从而允许任何用户访问和操作 X 服务器。
+先允许 X11 显示：
 
 ```bash
 xhost +
 ```
 
-进入部署仓库目录后，可以通过如下命令启动镜像：
+再启动容器：
 
 ```bash
 docker run -it \
@@ -117,80 +180,190 @@ docker run -it \
   -v .:/home/agi/x2_deploy_workspace \
   -d lingxi-x2-env:v1.0
 ```
-如果发现使用 NVIDIA 显卡的机器使用上述命令开启容器后仿真界面运行卡顿，可以尝试使用以下命令开启容器：
+
+### 5.4 ROS Domain 设置
+
+统一使用：
 
 ```bash
-docker run -it \
-  --name x2_deploy \
-  --gpus all \
-  --privileged \
-  --net=host \
-  --ipc=host \
-  --pid=host \
-  -e DISPLAY=$DISPLAY \
-  -e NVIDIA_VISIBLE_DEVICES=all \
-  -e NVIDIA_DRIVER_CAPABILITIES=all \
-  -v /dev/input:/dev/input \
-  -v /tmp:/tmp \
-  -v /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro \
-  -v .:/home/agi/x2_deploy_workspace \
-  -d lingxi-x2-env:v1.0
+export ROS_DOMAIN_ID=20
+export ROS_LOCALHOST_ONLY=0
 ```
 
-## 编译 aimdk_msgs 包
-开启一新的终端执行如下指令：
+`scripts/run_all.sh` 已经内置这两个环境变量。
+
+### 5.5 编译 `aimdk_msgs`
+
+如果 `aimdk_msgs/` 尚未存在，需要在容器内构建：
+
 ```bash
-# 进入容器环境
-docker start x2_deploy && docker exec -it x2_deploy /bin/bash     
+docker start x2_deploy
+docker exec -it x2_deploy /bin/bash
 
-# 开始编译构建
-cd  /home/agi/x2_deploy_workspace/aimdk-aarch64-1bde262f-artifacts
+cd /home/agi/x2_deploy_workspace/aimdk-aarch64-1bde262f-artifacts
+colcon build
+cp -r ./install/aimdk_msgs/ /home/agi/x2_deploy_workspace/
+```
 
-colcon build 
+### 5.6 启动 sim + mc + autonomy
 
-#将构建产物复制到指令目录下
-cp -r ./install/aimdk_msgs/ ../
-``` 
+推荐统一入口：
 
-## 启动仿真
-开启一新的终端执行如下指令：
 ```bash
-# 进入容器环境
-docker start x2_deploy && docker exec -it x2_deploy /bin/bash     
+docker start x2_deploy
+docker exec -it x2_deploy /home/agi/x2_deploy_workspace/scripts/run_all.sh
+```
 
-# 启动仿真
+如果你已经 `cd` 到 `Raicom2026/` 根目录，也可以直接用更短的宿主机入口：
+
+```bash
+./start
+```
+
+`./start` 是宿主机包装脚本，会自动执行 `docker start x2_deploy` 并进入容器调用 `scripts/run_all.sh`。前提是 `x2_deploy` 容器已经按本文前面的方式创建完成。
+
+该脚本会自动完成：
+
+1. 设置 `ROS_DOMAIN_ID=20`
+2. 构建 `raicom2026_x2_autonomy/build_docker`
+3. 启动 `sim_mujoco/bin/start_sim.sh`
+4. 启动 `mc/bin/em_run.sh`
+5. 启动 autonomy 主节点
+
+如果需要手动分开启动，可使用：
+
+启动仿真：
+
+```bash
+docker start x2_deploy
+docker exec -it x2_deploy /bin/bash
 cd /home/agi/x2_deploy_workspace/sim_mujoco/bin
-./start_sim.sh   
-``` 
-正确启动后将看到如下界面：
-![](./document/images/sim_mujoco.png)
+./start_sim.sh
+```
 
+启动 MC：
 
-## 启动运动控制模块
-开启一新的终端执行如下指令：
 ```bash
-# 进入容器环境
-docker start x2_deploy && docker exec -it x2_deploy /bin/bash     
-
-# 启动mc
+docker start x2_deploy
+docker exec -it x2_deploy /bin/bash
 cd /home/agi/x2_deploy_workspace/mc/bin
-./em_run.sh   
-```  
-正确启动后将看到如下界面：
-![](./document/images/mc.png)
+./em_run.sh
+```
 
-## 运行示例代码
-开启一新的终端执行如下指令：
+启动 autonomy：
 
 ```bash
-# 进入容器环境
-docker start x2_deploy && docker exec -it x2_deploy /bin/bash     
+docker start x2_deploy
+docker exec -it x2_deploy /home/agi/x2_deploy_workspace/scripts/run_all.sh
+```
 
-# 启动example
-cd /home/agi/x2_deploy_workspace/example/py
-python3 set_mode.py    #选择SD 模式后，点击仿真的Reset 按钮 
+## 6. Debug 方法
 
-```  
-选择SD 模式后，点击仿真的Reset 按钮， 可以在仿真中看到机器人稳定站立。
+### 6.1 如何检查机器人是否在动
 
-其他示例代码可参考 [AimDK_X2 官方开发手册](https://x2-aimdk.agibot.com/zh-cn/latest/index.html)
+优先看 odom 变化。当前代码和日志中会输出 `odom_delta` 或导航距离变化。
+
+可检查 autonomy 日志中的：
+
+- `dist=...`
+- `forward=... lateral=... yaw_error=...`
+- `odom_delta=(..., ...)`
+
+也可以在容器内直接查看 odom topic：
+
+```bash
+docker exec -it x2_deploy /bin/bash
+source /opt/ros/humble/setup.bash
+ros2 topic echo /aima/hal/odom/state
+```
+
+如果位置持续变化，说明机器人确实在运动。
+
+### 6.2 如何检查 topic
+
+列出 topic：
+
+```bash
+docker exec -it x2_deploy /bin/bash
+source /opt/ros/humble/setup.bash
+ros2 topic list
+```
+
+检查控制 topic 是否存在：
+
+```bash
+ros2 topic info /aima/mc/locomotion/velocity
+```
+
+检查是否有控制消息：
+
+```bash
+ros2 topic echo /aima/mc/locomotion/velocity
+```
+
+检查 odom：
+
+```bash
+ros2 topic echo /aima/hal/odom/state
+```
+
+### 6.3 常见失败原因
+
+#### domain mismatch
+
+现象：
+
+- autonomy 在发消息，但 MC 或 sim 没反应
+- `ros2 topic list` 两边看到的话题不一致
+
+处理：
+
+- 确认宿主机和容器都使用 `ROS_DOMAIN_ID=20`
+- 确认 `ROS_LOCALHOST_ONLY=0`
+
+#### mc not connected
+
+现象：
+
+- `run_all.sh` 提示 `mc_app_main is not running`
+- 机器人站立后不进入 locomotion
+
+处理：
+
+- 检查 `mc/bin/em_run.sh` 是否真正启动
+- 容器内执行 `pgrep -f mc_app_main`
+
+#### 仿真未启动或显示异常
+
+现象：
+
+- 没有 Mujoco 窗口
+- `start_sim.sh` 报错
+
+处理：
+
+- 确认先执行了 `xhost +`
+- 确认 Docker 启动参数包含 `-e DISPLAY=$DISPLAY`
+
+## 7. 已完成成果说明
+
+当前已完成的能力如下：
+
+- 站立成功
+  已实现 `RESET` 后自动调用 `STAND_DEFAULT` 并通过稳定性检查。
+- zone1 到达
+  已实现基于 odom 和 imu 的闭环导航，可向 `zone_1` 目标点移动。
+- 基本导航实现
+  已完成 yaw 对齐、位姿滤波、速度控制、目标点停止判定和到点后动作切换。
+
+## 8. 交付打包说明
+
+比赛提交建议只打包 `Raicom2026/` 目录，而不是更上层仓库。
+
+原因：
+
+- `run_all.sh` 固定要求容器挂载根目录为 `/home/agi/x2_deploy_workspace`
+- 挂载根目录下必须直接看到 `sim_mujoco/`、`mc/`、`raicom2026_x2_autonomy/`、`scripts/`
+- 如果把上层 `link_u_os_competition/` 整体作为运行根目录，路径会多出一层，运行入口会失配
+
+推荐打包命令见最终交付说明。

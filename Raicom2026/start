@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONTAINER_NAME="${X2_CONTAINER_NAME:-x2_deploy}"
+WORKSPACE_DIR="${X2_DEPLOY_WORKSPACE:-/home/agi/x2_deploy_workspace}"
+RUN_ALL_SCRIPT="${WORKSPACE_DIR}/scripts/run_all.sh"
+
+if [[ "${PWD}" != "${SCRIPT_DIR}" ]]; then
+  echo "[INFO] Switching to ${SCRIPT_DIR}"
+  cd "${SCRIPT_DIR}"
+fi
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "[ERROR] docker command not found on host." >&2
+  exit 1
+fi
+
+if ! docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
+  echo "[ERROR] Docker container '${CONTAINER_NAME}' does not exist." >&2
+  echo "[ERROR] Create/start the container first, then rerun ./start." >&2
+  exit 1
+fi
+
+docker start "${CONTAINER_NAME}" >/dev/null
+exec docker exec -it "${CONTAINER_NAME}" "${RUN_ALL_SCRIPT}" "$@"
